@@ -27,9 +27,9 @@ async function main() {
   }
   const day = new Date(Date.now() + 7 * 86400000).toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
   const draft = await db.rpc('save_event', { p_actor: owner.id, p_id: eventId, p_data: {
-    title: 'Noche Andina en Huancayo', description: 'Demo de SamiTicket: música local y control de ingreso con QR. Todos los pagos son simulados.',
-    starts_at: new Date(`${day}T20:00:00-05:00`).toISOString(), venue: 'Casa Cultural Wanka', address: 'Av. Giráldez 590, Huancayo',
-    city: 'Huancayo', latitude: -12.06513, longitude: -75.20486, price_cents: 2500, capacity: 180, category: 'Música y cultura', outdoor: false,
+    title: 'Gran Concurso de Huaylarsh Wanka 2026', description: 'El evento folclórico más esperado del Valle del Mantaro. Más de 40 conjuntos de danza en competencia, orquestas típicas y la fuerza incontrastable del zapateo huanca.',
+    starts_at: new Date(`${day}T14:00:00-05:00`).toISOString(), venue: 'Coliseo Wanka', address: 'Av. Huancavelica s/n, Huancayo',
+    city: 'Huancayo', latitude: -12.06513, longitude: -75.20486, price_cents: 3000, capacity: 250, category: 'Huaylarsh & Danzas', outdoor: false,
   } });
   if (draft.error) throw new Error('No pudimos crear la semilla. Comprueba la migración y las credenciales.');
   console.log(`Borrador demo creado para ${day}. Añade una portada y publica desde /panel/${eventId}.`);

@@ -15,13 +15,16 @@ export default async function EventPage({ params }: PageProps<"/e/[slug]">) {
   const event = (await publicEvents(slug))[0];
   if (!event) notFound();
 
-
   return (
     <main>
+      <div className="santiago-top-ribbon" aria-hidden="true" />
       <header className="site-header container">
-        <Link className="brand" href="/">Sami<span>Ticket</span></Link>
+        <div className="brand-group">
+          <Link className="brand" href="/">Sami<span>Ticket</span></Link>
+          <span className="brand-badge">Huancayo & Perú</span>
+        </div>
         <div className="header-actions">
-          <Link className="button button-secondary" href="/">← Volver a eventos</Link>
+          <Link className="button button-secondary" href="/">← Volver a cartelera</Link>
           <AuthControl />
         </div>
       </header>
@@ -30,33 +33,95 @@ export default async function EventPage({ params }: PageProps<"/e/[slug]">) {
         <div className="container">
           <p className="eyebrow">{event.category}</p>
           <h1>{event.title}</h1>
-          <p>{formatEventDate(event.date)} · {event.startTime}</p>
+          <p>{formatEventDate(event.date)} · {event.startTime} · {event.city || 'Huancayo'}</p>
         </div>
       </section>
 
       <section className="container event-layout">
         <article className="event-details">
-          {event.coverLargeUrl ? <Image className="event-poster" src={event.coverLargeUrl} alt={`Afiche completo de ${event.title}`} width={1600} height={1600} unoptimized loading="eager" /> : <div className="event-visual" />}
+          {event.coverLargeUrl ? (
+            <Image
+              className="event-poster"
+              src={event.coverLargeUrl}
+              alt={`Afiche oficial de ${event.title}`}
+              width={1600}
+              height={1600}
+              unoptimized
+              loading="eager"
+            />
+          ) : (
+            <div className="event-visual" />
+          )}
+
           <section>
-            <h2>Sobre el evento</h2>
+            <h2>Sobre la fiesta</h2>
             <p>{event.description}</p>
           </section>
+
           <section className="detail-grid">
-            <div><span>Fecha y hora</span><strong>{formatEventDate(event.date)} · {event.startTime}</strong></div>
-            <div><span>Lugar</span><strong>{event.venue}<br />{event.address}</strong></div>
-            <div><span>Entradas disponibles</span><strong>{event.available} de {event.capacity}</strong></div>
+            <div>
+              <span>Fecha y hora</span>
+              <strong>{formatEventDate(event.date)} · {event.startTime}</strong>
+            </div>
+            <div>
+              <span>Lugar</span>
+              <strong>{event.venue}<br />{event.address}</strong>
+            </div>
+            <div>
+              <span>Pases disponibles</span>
+              <strong>{event.available} de {event.capacity}</strong>
+            </div>
           </section>
-          <section><h2>Cómo llegar</h2>{event.reference && <p>Referencia: {event.reference}</p>}
+
+          <section>
+            <h2>Cómo llegar</h2>
+            {event.reference && <p>Referencia local: {event.reference}</p>}
             <LocationMap latitude={event.latitude} longitude={event.longitude} />
-            <a className="button button-secondary" href={`https://www.google.com/maps/dir/?api=1&destination=${event.latitude},${event.longitude}`} target="_blank" rel="noreferrer">Cómo llegar en Google Maps</a>
+            <a
+              className="button button-secondary"
+              href={`https://www.google.com/maps/dir/?api=1&destination=${event.latitude},${event.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              style={{ marginTop: '16px' }}
+            >
+              🗺️ Abrir ubicación en Google Maps
+            </a>
           </section>
-          <WeatherPanel latitude={event.latitude} longitude={event.longitude} date={event.date} time={event.startTime} outdoor={event.outdoor} />
+
+          <WeatherPanel
+            latitude={event.latitude}
+            longitude={event.longitude}
+            date={event.date}
+            time={event.startTime}
+            outdoor={event.outdoor}
+          />
         </article>
+
         <aside>
-          <div className="price-card"><span>Entrada general</span><strong>{formatCurrency(event.priceCents)}</strong></div>
-          <BuyerRegistration eventId={event.id} available={event.available} demoEnabled={process.env.DEMO_PAYMENTS_ENABLED === 'true'} />
+          <div className="price-card">
+            <span>Entrada general</span>
+            <strong>{formatCurrency(event.priceCents)}</strong>
+          </div>
+          <BuyerRegistration
+            eventId={event.id}
+            available={event.available}
+            demoEnabled={process.env.DEMO_PAYMENTS_ENABLED === 'true'}
+          />
         </aside>
       </section>
+
+      <footer className="festive-footer">
+        <div className="chumpi-band" aria-hidden="true" style={{ marginBottom: '24px' }} />
+        <div className="container footer-content">
+          <div className="footer-brand">
+            <span className="brand">Sami<span>Ticket</span></span>
+            <span>El latido festivo de Huancayo y todo el Perú</span>
+          </div>
+          <div className="footer-badge">
+            <span>Garantía de ingreso con QR seguro</span>
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }
