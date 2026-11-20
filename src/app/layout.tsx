@@ -1,13 +1,11 @@
 import type { Metadata } from "next";
-import { Plus_Jakarta_Sans } from "next/font/google";
+import { Manrope, Inter } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+import { AppExperience } from '@/components/app-feedback';
 
-const jakarta = Plus_Jakarta_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
-  variable: "--font-sans",
-  display: "swap",
-});
+const inter = Inter({subsets:['latin'],variable:'--font-body'});
+const manrope = Manrope({subsets:['latin'],variable:'--font-display'});
 
 export const metadata: Metadata = {
   title: "SamiTicket | La fiesta de Huancayo y el Perú",
@@ -16,8 +14,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="es" className={jakarta.variable}>
-      <body className={jakarta.className}>{children}</body>
+    <html lang="es" className={cn("dark", inter.variable, manrope.variable)}>
+      <body className={inter.className}><AppExperience>{children}</AppExperience></body>
     </html>
   );
 }

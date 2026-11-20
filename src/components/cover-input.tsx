@@ -2,9 +2,20 @@
 import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import { FieldError } from './field-errors';
+import { HaloDropzone } from '@/components/ui/halo-dropzone';
 
 export function CoverInput({ file, currentUrl, onChange, errors, disabled }: { file: File | null; currentUrl?: string | null; onChange: (file: File | null) => void; errors: Record<string, string>; disabled?: boolean }) {
   const [preview, setPreview] = useState<{ file: File; url: string } | null>(null);
+  const [localError, setLocalError] = useState('');
+  const combinedErrors = { ...errors, cover: localError || errors.cover };
+  function select(files: File[]) {
+    if (disabled) return false;
+    const next = files[0];
+    if (!next) return false;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(next.type)) { setLocalError('Usa una imagen JPEG, PNG o WebP estática.'); return false; }
+    if (next.size > 8 * 1024 * 1024) { setLocalError('La imagen debe pesar hasta 8 MiB.'); return false; }
+    setLocalError(''); onChange(next); return true;
+  }
   useEffect(() => {
     if (!file || file.size > 8 * 1024 * 1024) return;
     const reader = new FileReader();
@@ -16,8 +27,8 @@ export function CoverInput({ file, currentUrl, onChange, errors, disabled }: { f
   return <div className="field-group cover-input">
     <label htmlFor="cover">Portada del evento</label>
     <p className="field-help" id="cover-help">JPEG, PNG o WebP estático. Hasta 8 MiB y 32 megapíxeles. Obligatoria para publicar. Generamos dos versiones WebP.</p>
-    <input id="cover" data-field="cover" type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled} aria-invalid={Boolean(errors.cover)} aria-describedby={`cover-help${errors.cover ? ' cover-error' : ''}`} onChange={e => onChange(e.target.files?.[0] ?? null)} />
-    <FieldError name="cover" errors={errors} />
+    <HaloDropzone className="halo-cover" inputId="cover" accept="image/jpeg,image/png,image/webp" disabled={disabled} invalid={Boolean(combinedErrors.cover)} describedBy={`cover-help${combinedErrors.cover ? ' cover-error' : ''}`} onFiles={select} multiple={false} successResetMs={0} emptyLabel="Elegir portada o arrastrar una imagen" successLabel="Imagen seleccionada; se guardará con el evento" formatHint="JPEG, PNG o WebP · Hasta 8 MiB" showSuccessThumbnails={false} />
+    <FieldError name="cover" errors={combinedErrors} />
     {url && <Image className="cover-preview" src={url} alt="Vista previa de la portada" width={640} height={640} unoptimized />}
   </div>;
 }

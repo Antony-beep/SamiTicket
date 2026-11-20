@@ -1,9 +1,14 @@
 import Link from "next/link";
 import Image from 'next/image';
 import { notFound } from "next/navigation";
-import { AuthControl } from "@/components/auth/auth-control";
+import { SiteHeader } from '@/components/site-header';
+import { SiteFooter } from '@/components/site-footer';
+import { Badge } from '@/components/ui/badge';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { ArrowLeft01Icon, ArrowUpRight01Icon } from '@hugeicons/core-free-icons';
 import { BuyerRegistration } from "@/components/buyer-registration";
-import { formatCurrency, formatEventDate } from "@/lib/events";
+import { formatCurrency, formatEventDate, googleCalendarUrl } from "@/lib/events";
+import { formatUsdEstimate, getPenToUsdRate } from "@/lib/server/currency";
 import { publicEvents } from "@/lib/server/data";
 import { connection } from 'next/server';
 import { WeatherPanel } from '@/components/weather-panel';
@@ -12,28 +17,29 @@ import { LocationMap } from '@/components/location-map';
 export default async function EventPage({ params }: PageProps<"/e/[slug]">) {
   await connection();
   const { slug } = await params;
-  const event = (await publicEvents(slug))[0];
+  const [events, usdRate] = await Promise.all([publicEvents(slug), getPenToUsdRate()]);
+  const event = events[0];
   if (!event) notFound();
+  const usdEstimate = formatUsdEstimate(event.priceCents, usdRate);
+  const gcalUrl = googleCalendarUrl({
+    title: event.title,
+    startsAt: event.date && event.startTime ? `${event.date}T${event.startTime}:00-05:00` : null,
+    venue: event.venue,
+    address: event.address,
+    city: event.city,
+    details: event.description,
+  });
 
   return (
-    <main>
-      <div className="santiago-top-ribbon" aria-hidden="true" />
-      <header className="site-header container">
-        <div className="brand-group">
-          <Link className="brand" href="/">Sami<span>Ticket</span></Link>
-          <span className="brand-badge">Huancayo & Perú</span>
-        </div>
-        <div className="header-actions">
-          <Link className="button button-secondary" href="/">← Volver a cartelera</Link>
-          <AuthControl />
-        </div>
-      </header>
+    <main className="event-page">
+      <SiteHeader />
 
       <section className="event-hero">
         <div className="container">
-          <p className="eyebrow">{event.category}</p>
+          <Link className="event-back" href="/#eventos"><HugeiconsIcon icon={ArrowLeft01Icon} size={16} aria-hidden="true" />Volver a la cartelera</Link>
+          <div><Badge variant="outline">{event.category}</Badge></div>
           <h1>{event.title}</h1>
-          <p>{formatEventDate(event.date)} · {event.startTime} · {event.city || 'Huancayo'}</p>
+          <p>{formatEventDate(event.date)} · {event.startTime} · {event.city}</p>
         </div>
       </section>
 
@@ -78,14 +84,23 @@ export default async function EventPage({ params }: PageProps<"/e/[slug]">) {
             {event.reference && <p>Referencia local: {event.reference}</p>}
             <LocationMap latitude={event.latitude} longitude={event.longitude} />
             <a
-              className="button button-secondary"
+              className="map-link"
               href={`https://www.google.com/maps/dir/?api=1&destination=${event.latitude},${event.longitude}`}
               target="_blank"
               rel="noreferrer"
-              style={{ marginTop: '16px' }}
             >
-              🗺️ Abrir ubicación en Google Maps
+              Abrir ubicación en Google Maps <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} aria-hidden="true" />
             </a>
+            <div style={{ marginTop: '12px', display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+              {gcalUrl && (
+                <a className="map-link" href={gcalUrl} target="_blank" rel="noreferrer">
+                  📅 Añadir a Google Calendar <HugeiconsIcon icon={ArrowUpRight01Icon} size={18} aria-hidden="true" />
+                </a>
+              )}
+              <a className="map-link" href={`/api/events/${event.id}/calendar`} download>
+                Descargar archivo .ics
+              </a>
+            </div>
           </section>
 
           <WeatherPanel
@@ -97,31 +112,24 @@ export default async function EventPage({ params }: PageProps<"/e/[slug]">) {
           />
         </article>
 
-        <aside>
+        <aside id="entradas" className="event-purchase" aria-label="Compra de entradas">
           <div className="price-card">
             <span>Entrada general</span>
             <strong>{formatCurrency(event.priceCents)}</strong>
+            {usdEstimate && <span style={{ fontSize: '0.85rem', color: 'var(--muted)' }}>{usdEstimate} (tipo de cambio referencial)</span>}
           </div>
           <BuyerRegistration
             eventId={event.id}
             available={event.available}
             demoEnabled={process.env.DEMO_PAYMENTS_ENABLED === 'true'}
+            mercadoPagoEnabled={process.env.MP_PAYMENTS_ENABLED === 'true'}
+            reniecRequired={process.env.RENIEC_VERIFICATION_ENABLED === 'true'}
           />
         </aside>
       </section>
 
-      <footer className="festive-footer">
-        <div className="chumpi-band" aria-hidden="true" style={{ marginBottom: '24px' }} />
-        <div className="container footer-content">
-          <div className="footer-brand">
-            <span className="brand">Sami<span>Ticket</span></span>
-            <span>El latido festivo de Huancayo y todo el Perú</span>
-          </div>
-          <div className="footer-badge">
-            <span>Garantía de ingreso con QR seguro</span>
-          </div>
-        </div>
-      </footer>
+      <a className="mobile-purchase" href="#entradas" aria-label="Ver entradas" aria-describedby="mobile-ticket-price"><span>Entrada general<strong id="mobile-ticket-price">{formatCurrency(event.priceCents)}</strong></span><span>{event.available > 0 ? 'Ver entradas' : 'Agotado'}<HugeiconsIcon icon={ArrowUpRight01Icon} size={20} aria-hidden="true" /></span></a>
+      <SiteFooter />
     </main>
   );
 }

@@ -8,7 +8,8 @@ vi.mock('@/lib/supabase/server', () => ({ createClient: async () => ({ auth: { g
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => ({
   rpc: state.rpc,
   from: (table: string) => {
-    const query = { select: () => query, eq: () => query,
+    const query = { select: () => query, eq: () => query, in: () => query, order: () => query,
+      limit: async () => ({ data: state.rows.resumableOrders ?? [], error: null }),
       maybeSingle: async () => ({ data: state.rows[table] ?? null, error: null }),
       single: async () => ({ data: state.rows[table] ?? null, error: null }) };
     return query;
@@ -36,10 +37,29 @@ beforeEach(() => {
   vi.restoreAllMocks(); vi.unstubAllEnvs();
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-only'); vi.stubEnv('DEMO_PAYMENTS_ENABLED', 'true');
+  vi.stubEnv('MP_PAYMENTS_ENABLED', 'false');
   state.cookie = '1'.repeat(64); state.rows = {}; state.rpc.mockReset(); state.setCookie.mockReset();
   state.rpc.mockResolvedValue({ data: id, error: null });
 });
 describe('HTTP boundaries and private receipts', () => {
+  it('resumes a processing Mercado Pago order only for its original browser', async () => {
+    vi.stubEnv('MP_PAYMENTS_ENABLED', 'true');
+    const newId = '77777777-7777-4777-8777-777777777777';
+    state.rows.resumableOrders = [{ id, access_hash: receiptHash(state.cookie, id) }];
+    const verifier = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json({ disposable: true }));
+    const input = { id: newId, eventId, name: 'Comprador', email: 'buyer@example.com' };
+    const own = await createOrder(request('/api/orders', input));
+    expect(own.status).toBe(200);
+    expect(await own.json()).toEqual({ id, url: `/pedido/${id}` });
+    expect(verifier).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
+
+    state.cookie = '2'.repeat(64);
+    const other = await createOrder(request('/api/orders', input));
+    expect(other.status).toBe(422);
+    expect(await other.text()).not.toContain(id);
+  });
+
   it('denies cross-origin writes and disabled demo payments', async () => {
     expect((await createOrder(request('/api/orders', {}, 'https://evil.test'))).status).toBe(403);
     vi.stubEnv('DEMO_PAYMENTS_ENABLED', 'false');

@@ -1,9 +1,12 @@
 'use client';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { IScannerControls } from '@zxing/browser';
 import { clientApi } from '@/lib/client-api';
 import { qrToken } from '@/lib/validation';
 import { FieldError, fieldErrors } from './field-errors';
+import { notify } from '@/lib/feedback';
 
 type ScanResult = { status: 'accepted' | 'used' | 'invalid' | 'wrong_event'; checkedAt?: string };
 const labels = { accepted: 'Ingreso autorizado', used: 'Esta entrada ya fue usada', invalid: 'QR inválido', wrong_event: 'Esta entrada pertenece a otro evento' };
@@ -31,7 +34,7 @@ export function Scanner({ eventId }: { eventId: string }) {
     stop(); setMessage(''); setResult(null); setErrors({});
     if (!navigator.onLine) { setMessage('Sin conexión. Conéctate a internet antes de validar.'); return; }
     locked.current = true; setBusy(true);
-    try { setResult(await clientApi<ScanResult>(`/api/events/${eventId}/check-in`, 'POST', { token: qrToken(value) })); }
+    try { const result=await clientApi<ScanResult>(`/api/events/${eventId}/check-in`, 'POST', { token: qrToken(value) }); setResult(result); notify({title:labels[result.status],tone:result.status==='accepted'?'success':'error'}); }
     catch (error) { setErrors(fieldErrors(error)); setMessage((error as Error).message || 'No pudimos confirmar el ingreso. Reintenta con internet.'); document.getElementById('manual-token')?.focus(); }
     finally { locked.current = false; setBusy(false); }
   }
@@ -56,9 +59,9 @@ export function Scanner({ eventId }: { eventId: string }) {
   }
   function manual(event: FormEvent) { event.preventDefault(); void validate(token); }
   return <div className="scanner">
-    <div className="actions"><button className="button button-primary" disabled={busy || camera} onClick={start}>Abrir cámara</button>{camera && <button className="button button-secondary" onClick={stop}>Cerrar cámara</button>}</div>
+    <div className="actions"><Button className="button button-primary" disabled={busy || camera} onClick={start}>Abrir cámara</Button>{camera && <Button className="button button-secondary" onClick={stop}>Cerrar cámara</Button>}</div>
     <video ref={video} className={camera ? 'scanner-video' : 'scanner-video hidden'} autoPlay muted playsInline aria-label="Cámara para escanear entradas" />
-    <form noValidate onSubmit={manual}><div className="field-group"><label htmlFor="manual-token">Token de la entrada</label><input id="manual-token" aria-invalid={Boolean(errors.token)} aria-describedby={errors.token ? 'token-error' : undefined} value={token} onChange={e => setToken(e.target.value)} required maxLength={64} autoComplete="off" placeholder="Pega los 64 caracteres del QR" /><FieldError name="token" errors={errors} /></div><button className="button button-secondary" disabled={busy} type="submit">{busy ? 'Validando…' : 'Validar token'}</button></form>
+    <form noValidate onSubmit={manual}><div className="field-group"><label htmlFor="manual-token">Token de la entrada</label><Input id="manual-token" aria-invalid={Boolean(errors.token)} aria-describedby={errors.token ? 'token-error' : undefined} value={token} onChange={e => setToken(e.target.value)} required maxLength={64} autoComplete="off" placeholder="Pega los 64 caracteres del QR" /><FieldError name="token" errors={errors} /></div><Button className="button button-secondary" disabled={busy} type="submit">{busy ? 'Validando…' : 'Validar token'}</Button></form>
     {result && <div role="status" className={`notice ${result.status === 'accepted' ? 'notice-success' : 'notice-error'}`}><strong>{labels[result.status]}</strong>{result.checkedAt && <p>{new Date(result.checkedAt).toLocaleString('es-PE', { timeZone: 'America/Lima' })}</p>}</div>}
     {message && <p role="alert" className="notice notice-error">{message}</p>}
   </div>;

@@ -48,6 +48,14 @@ beforeAll(async () => {
   // Storage's managed schema is represented only for bucket configuration in local SQL tests.
   await db.exec('create schema storage; create table storage.buckets(id text primary key, name text, public boolean, file_size_limit bigint, allowed_mime_types text[]);');
   await db.exec(await readFile('supabase/migrations/202610160002_event_improvements.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190003_mercadopago_test.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190004_payment_state_guard.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190005_payment_refund_guard.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611200006_buyer_dni.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190003_mercadopago_test.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190004_payment_state_guard.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611190005_payment_refund_guard.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202611200006_buyer_dni.sql', 'utf8'));
   const preserved = await db.query<{ status: string; cover_version: string | null }>('select status,cover_version from public.events where id=$1', [legacy]);
   expect(preserved.rows[0]).toEqual({ status: 'published', cover_version: null });
   await cover(legacy);
@@ -62,6 +70,53 @@ beforeEach(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe('MVP PostgreSQL migration and transactions', () => {
+  it('reserves the last MP slot, prevents simulation and emits once', async () => {
+    const eventId = await event(owner, 1);
+    const id = randomUUID();
+    const create = (orderId = id) => db.query('select public.create_mp_order($1,$2,$3,$4,$5,$6)',
+      [orderId, eventId, 'Comprador', 'buyer@example.com', hash, '3858452255']);
+    await create();
+    await create();
+    await expect(create(randomUUID())).rejects.toThrow('ST:sold_out');
+    await expect(pay(id)).rejects.toThrow('ST:mp_order_final');
+    const settle = () => db.query<{ result: string }>('select public.reconcile_mp_payment($1,$2,$3,$4,$5,$6) as result',
+      [id, '123456', '3858452255', 2500, 'approved', token]);
+    expect((await settle()).rows[0].result).toBe('paid');
+    expect((await settle()).rows[0].result).toBe('paid');
+    await db.query('select public.reconcile_mp_payment($1,$2,$3,$4,$5,$6)',
+      [id, '123456', '3858452255', 2500, 'pending', token]);
+    expect((await settle()).rows[0].result).toBe('paid');
+    expect((await db.query('select * from public.tickets where order_id=$1', [id])).rows).toHaveLength(1);
+    const duplicate = await db.query<{ result: string }>('select public.reconcile_mp_payment($1,$2,$3,$4,$5,$6) as result',
+      [id, '123457', '3858452255', 2500, 'approved', 'c'.repeat(64)]);
+    expect(duplicate.rows[0].result).toBe('refund_required');
+    // A refund can arrive before the approval notification for an extra attempt.
+    await db.query('select public.reconcile_mp_payment($1,$2,$3,$4,$5,$6)',
+      [id, '123458', '3858452255', 2500, 'refunded', 'd'.repeat(64)]);
+    expect((await db.query<{ status: string }>('select status from public.orders where id=$1', [id])).rows[0].status).toBe('paid');
+    expect((await scan(eventId, owner)).rows[0].result.status).toBe('accepted');
+  });
+
+  it('refunds a late payment when its expired slot was sold and revokes refunded QR', async () => {
+    const eventId = await event(owner, 1);
+    const id = randomUUID();
+    await db.query('select public.create_mp_order($1,$2,$3,$4,$5,$6)', [id,eventId,'Comprador','buyer@example.com',hash,'seller']);
+    await db.query("update public.mp_checkouts set expires_at=now()-interval '1 minute' where order_id=$1", [id]);
+    const next = await order(eventId);
+    await pay(next);
+    const settle = (orderId: string, state: string, paymentId: string) => db.query<{ result: string }>(
+      'select public.reconcile_mp_payment($1,$2,$3,$4,$5,$6) as result',
+      [orderId,paymentId,'seller',2500,state,'c'.repeat(64)]);
+    expect((await settle(id,'approved','111')).rows[0].result).toBe('refund_required');
+    expect((await db.query('select * from public.tickets where order_id=$1',[id])).rows).toHaveLength(0);
+    const otherEvent = await event(owner, 1);
+    const otherId = randomUUID();
+    await db.query('select public.create_mp_order($1,$2,$3,$4,$5,$6)', [otherId,otherEvent,'Comprador','buyer@example.com',hash,'seller']);
+    expect((await settle(otherId,'approved','222')).rows[0].result).toBe('paid');
+    expect((await settle(otherId,'refunded','222')).rows[0].result).toBe('refunded');
+    expect((await scan(otherEvent,owner,'c'.repeat(64))).rows[0].result.status).toBe('invalid');
+    expect((await settle(otherId,'approved','222')).rows[0].result).toBe('refunded');
+  });
   it('isolates owners, saves drafts and freezes published details', async () => {
     const id = await event(owner, 2, false);
     await expect(db.query('select public.save_event($1::uuid, $2::uuid, $3::jsonb)', [null, id, JSON.stringify(details())])).rejects.toThrow('ST:forbidden');
@@ -86,7 +141,9 @@ describe('MVP PostgreSQL migration and transactions', () => {
     expect((await db.query('select * from public.ticket_types')).rows).toHaveLength(1);
     for (const role of ['anon', 'authenticated']) {
       await db.exec(`set role ${role}`);
-      for (const table of ['orders', 'tickets', 'check_ins', 'event_staff']) await expect(db.query(`select * from public.${table}`)).rejects.toThrow('permission denied');
+      for (const table of ['orders', 'tickets', 'check_ins', 'event_staff', 'mp_checkouts', 'mp_payments']) await expect(db.query(`select * from public.${table}`)).rejects.toThrow('permission denied');
+      await expect(db.query('select public.create_mp_order($1,$2,$3,$4,$5,$6)', [randomUUID(),randomUUID(),'Prueba','test@example.com',hash,'seller'])).rejects.toThrow('permission denied');
+      await expect(db.query('select public.set_order_dni($1,$2,$3)', [randomUUID(),hash,'47291038'])).rejects.toThrow('permission denied');
       await expect(db.query('select public.publish_event($1::uuid, $2::uuid)', [owner, randomUUID()])).rejects.toThrow('permission denied');
       await expect(db.query('insert into public.events(owner_id,slug) values($1, $2)', [owner, randomUUID()])).rejects.toThrow('permission denied');
     }
@@ -98,6 +155,12 @@ describe('MVP PostgreSQL migration and transactions', () => {
     expect((await db.query<{ sold: number }>('select sold from public.ticket_types where event_id = $1', [id])).rows[0].sold).toBe(0);
     await expect(db.query('select public.create_order($1::uuid,$2::uuid,$3,$4,$5)', [purchase, id, 'Otro', 'buyer@example.com', hash])).rejects.toThrow('ST:idempotency_conflict');
     await expect(pay(purchase, true, token, 'c'.repeat(64))).rejects.toThrow('ST:receipt_denied');
+    await db.query('select public.set_order_dni($1::uuid,$2,$3)', [purchase, hash, '47291038']);
+    await db.query('select public.set_order_dni($1::uuid,$2,$3)', [purchase, hash, '47291038']);
+    expect((await db.query<{ buyer_dni: string }>('select buyer_dni from public.orders where id = $1', [purchase])).rows[0].buyer_dni).toBe('47291038');
+    await expect(db.query('select public.set_order_dni($1::uuid,$2,$3)', [purchase, hash, '12345678'])).rejects.toThrow('ST:idempotency_conflict');
+    await expect(db.query('select public.set_order_dni($1::uuid,$2,$3)', [purchase, 'c'.repeat(64), '47291038'])).rejects.toThrow('ST:receipt_denied');
+    await expect(db.query('select public.set_order_dni($1::uuid,$2,$3)', [purchase, hash, 'abc'])).rejects.toThrow('ST:invalid_dni');
   });
   it('issues one ticket on retried approval and keeps rejection terminal', async () => {
     const id = await event();

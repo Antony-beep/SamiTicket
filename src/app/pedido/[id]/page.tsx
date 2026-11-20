@@ -4,20 +4,23 @@ import QRCode from 'qrcode';
 import { SiteHeader } from '@/components/site-header';
 import { Problem } from '@/components/problem';
 import { PaymentActions } from '@/components/payment-actions';
+import { MercadoPagoActions } from '@/components/mercadopago-actions';
+import { TicketEmailButton } from '@/components/ticket-email-button';
 import { receipt } from '@/lib/server/data';
 import { pageData } from '@/lib/server/page-auth';
 import { connection } from 'next/server';
-import { formatCurrency } from '@/lib/events';
+import { formatCurrency, googleCalendarUrl } from '@/lib/events';
+import { formatUsdEstimate, getPenToUsdRate } from '@/lib/server/currency';
 
 export const metadata = { title: 'Tu entrada festiva | SamiTicket', robots: { index: false, follow: false } };
 
-export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>) {
+export default async function ReceiptPage({ params, searchParams }: PageProps<'/pedido/[id]'>) {
   await connection();
-  const { id } = await params;
+  const [{ id }, { retorno }] = await Promise.all([params, searchParams]);
   const result = await pageData(async () => {
-    const order = await receipt(id);
+    const [order, usdRate] = await Promise.all([receipt(id), getPenToUsdRate()]);
     const qr = order.token ? await QRCode.toDataURL(order.token, { width: 320, margin: 4, errorCorrectionLevel: 'M' }) : null;
-    return { order, qr };
+    return { order, qr, usdEstimate: formatUsdEstimate(order.amountCents, usdRate) };
   });
 
   if (result.error !== undefined) {
@@ -31,9 +34,16 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
     );
   }
 
-  const { order, qr } = result.data;
+  const { order, qr, usdEstimate } = result.data;
   const isPaid = order.status === 'paid';
   const isRejected = order.status === 'rejected';
+  const gcalUrl = googleCalendarUrl({
+    title: order.event.title,
+    startsAt: order.event.starts_at,
+    venue: order.event.venue,
+    address: order.event.address,
+    details: `Boleto oficial de SamiTicket para ${order.name}`,
+  });
 
   return (
     <main>
@@ -44,12 +54,12 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
           {isPaid
             ? '¡Tu entrada está lista para la fiesta!'
             : isRejected
-            ? 'Pago simulado rechazado'
+            ? order.paymentMode === 'mp_test' ? 'Compra de prueba finalizada' : 'Pago simulado rechazado'
             : 'Completa tu compra'}
         </h1>
 
         <p className="notice">
-          Demostración: no se realizó ningún cobro. Guarda el PNG; el comprobante abre en este navegador mientras conserves tu sesión privada.
+          {order.paymentMode === 'mp_test' ? 'Mercado Pago · Prueba. Esta compra utiliza una cuenta vendedora ficticia de SamiTicket.' : 'Demostración: no se realizó ningún cobro.'} Guarda el PNG; el comprobante abre en este navegador mientras conserves tu sesión privada.
         </p>
 
         {/* Boleto Físico Coleccionable con Estilo Tradicional */}
@@ -92,6 +102,12 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
                 <span>Asistente</span>
                 <strong>{order.name}</strong>
               </div>
+              {order.dni && (
+                <div className="ticket-meta-item">
+                  <span>DNI verificado (RENIEC)</span>
+                  <strong>{order.dni}</strong>
+                </div>
+              )}
               <div className="ticket-meta-item">
                 <span>Correo registrado</span>
                 <strong style={{ wordBreak: 'break-all' }}>{order.email}</strong>
@@ -101,12 +117,17 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
                 <strong>Entrada General</strong>
               </div>
               <div className="ticket-meta-item">
-                <span>Total pagado</span>
+                <span>{isPaid ? 'Total pagado' : 'Total de la compra'}</span>
                 <strong style={{ color: 'var(--gold)', fontSize: '1.2rem' }}>{formatCurrency(order.amountCents)}</strong>
+                {usdEstimate && <span style={{ fontSize: '0.8rem', color: 'var(--muted)' }}>{usdEstimate}</span>}
               </div>
             </div>
 
-            {order.status === 'pending' && (
+            {order.paymentMode === 'mp_test' && <>
+              <MercadoPagoActions key={id} orderId={id} eventId={order.eventId} pending={order.status === 'pending' && !order.paymentState} isPaid={isPaid} demoEnabled={process.env.DEMO_PAYMENTS_ENABLED === 'true'} paymentAttempt={order.paymentAttempt} returnedFromCheckout={retorno === 'mercadopago'} />
+              {order.paymentState && <p role="status">{order.paymentState === 'refund_pending' ? 'Pago de prueba recibido sin emitir otra entrada. Reembolso pendiente. Usa Consultar pago para reintentar su confirmación.' : isPaid ? 'Se confirmó el reembolso de un intento adicional. Tu entrada continúa válida.' : 'Reembolso de prueba confirmado. Esta compra no tiene una entrada habilitada.'}</p>}
+            </>}
+            {order.paymentMode === 'demo' && order.status === 'pending' && (
               process.env.DEMO_PAYMENTS_ENABLED === 'true' ? (
                 <PaymentActions orderId={id} eventId={order.eventId} />
               ) : (
@@ -128,6 +149,7 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
                 <a className="button button-primary" href={`/api/orders/${id}/qr`} download>
                   📥 Descargar Pase QR en PNG
                 </a>
+                <TicketEmailButton orderId={id} email={order.email} />
                 <details style={{ marginTop: '12px', width: '100%', maxWidth: '380px' }}>
                   <summary style={{ cursor: 'pointer', color: 'var(--muted)', fontSize: '0.85rem' }}>
                     Ver token alfanumérico para validación manual
@@ -141,10 +163,18 @@ export default async function ReceiptPage({ params }: PageProps<'/pedido/[id]'>)
             )}
 
             {isRejected && (
-              <p className="notice notice-error">No se emitió una entrada ni se descontó stock.</p>
+              <p className="notice notice-error">{order.paymentMode === 'mp_test' ? 'Esta compra de prueba no tiene una entrada habilitada.' : 'No se emitió una entrada ni se descontó stock.'}</p>
             )}
 
-            <div className="actions" style={{ marginTop: '24px', justifyContent: 'center' }}>
+            <div className="actions" style={{ marginTop: '24px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {gcalUrl && (
+                <a href={gcalUrl} target="_blank" rel="noreferrer" className="button button-secondary">
+                  📅 Añadir a Google Calendar
+                </a>
+              )}
+              <a href={`/api/events/${order.eventId}/calendar`} download className="button button-secondary">
+                Descargar .ics
+              </a>
               <Link href={`/e/${order.event.slug}`} className="button button-secondary">
                 ← Volver a la página del evento
               </Link>

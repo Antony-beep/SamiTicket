@@ -18,6 +18,31 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('MVP forms', () => {
+  it('selects an outdoor space without submitting, then saves the existing outdoor contract', async () => {
+    mocks.api.mockResolvedValue({});
+    render(<EventForm />);
+    fireEvent.click(screen.getByRole('button', {name:'Al aire libre'}));
+    expect(mocks.api).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', {name:'Guardar borrador'}));
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledTimes(1));
+    expect(mocks.api.mock.calls[0][2].outdoor).toBe(true);
+  });
+  it('celebrates a new event only after the complete save succeeds', async () => {
+    const notices: CustomEvent[] = [];
+    const listen = (event: Event) => notices.push(event as CustomEvent);
+    window.addEventListener('samiticket:notice', listen);
+    try {
+      mocks.api.mockRejectedValueOnce(new Error('Sin conexión')).mockResolvedValue({});
+      render(<EventForm />);
+      fireEvent.change(screen.getByLabelText('Nombre del evento'), { target: { value: 'Mi fiesta' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+      await screen.findByText('Sin conexión');
+      expect(notices.filter(n => n.detail.celebrate)).toHaveLength(0);
+      fireEvent.click(screen.getByRole('button', { name: 'Guardar borrador' }));
+      await waitFor(() => expect(mocks.push).toHaveBeenCalledTimes(1));
+      expect(notices.filter(n => n.detail.celebrate)).toHaveLength(1);
+    } finally { window.removeEventListener('samiticket:notice', listen); }
+  });
   it('persists an incomplete draft and opens its management page', async () => {
     mocks.api.mockResolvedValue({});
     render(<EventForm />);
@@ -94,7 +119,7 @@ describe('MVP forms', () => {
     expect(selected).toHaveBeenCalledWith(expect.objectContaining({ latitude: -12.06 }));
   });
   it('keeps one order attempt across double clicks and normalizes the buyer', async () => {
-    mocks.api.mockResolvedValueOnce({ ready: true }).mockResolvedValueOnce({ url: '/pedido/test-order' });
+    mocks.api.mockResolvedValueOnce({ ready: true }).mockResolvedValueOnce({ id: 'test-order', url: '/pedido/test-order' });
     render(<BuyerRegistration eventId="event-1" available={1} demoEnabled />);
     fireEvent.change(screen.getByLabelText('Nombre completo'), { target: { value: 'Comprador' } });
     fireEvent.change(screen.getByLabelText('Correo'), { target: { value: 'Buyer@Example.COM' } });

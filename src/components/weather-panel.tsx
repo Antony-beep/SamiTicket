@@ -1,6 +1,10 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { validDate, weatherAdvice, type WeatherResult } from '@/lib/weather';
+import { WeatherIcon } from './weather-icon';
+import { HaloProgress } from './ui/halo-progress';
+import { HaloCard } from './ui/halo-card';
+import { Button } from './ui/button';
 
 export function WeatherPanel({ latitude, longitude, date, time, outdoor }: { latitude: number | null; longitude: number | null; date: string; time: string; outdoor: boolean }) {
   const [state, setState] = useState<{ key: string; data: WeatherResult | null }>({ key: '', data: null });
@@ -23,12 +27,12 @@ export function WeatherPanel({ latitude, longitude, date, time, outdoor }: { lat
   const forecast = data?.forecast;
   return <section className="forecast-panel" aria-label="Clima del evento" aria-live="polite">
     <h3>Clima para el {date}</h3>
-    {!data && <p>Consultando clima…</p>}
+    {!data && <HaloProgress value={null} label="Consultando clima…" />}
     {data?.status === 'out_of_range' && <p>El pronóstico cubre hoy y los siguientes 14 días. Todavía no hay pronóstico para esta fecha.</p>}
-    {data?.status === 'unavailable' && <><p>Clima no disponible. Puedes continuar.</p><button type="button" className="button button-secondary" onClick={() => setRetry(v => v + 1)}>Reintentar clima</button></>}
-    {forecast && <><p><strong>{forecast.condition}</strong> · Mín. {Math.round(forecast.min)} °C / Máx. {Math.round(forecast.max)} °C · Precipitación {forecast.precipitationProbability}%</p>
+    {data?.status === 'unavailable' && <><p>Clima no disponible. Puedes continuar.</p><Button type="button" variant="outline" onClick={() => setRetry(v => v + 1)}>Reintentar clima</Button></>}
+    {forecast && <HaloCard className="event-weather-card" aria-label="Pronóstico del evento" padding="md"><div className="weather-summary"><WeatherIcon code={forecast.code} isDay={forecast.hour?.isDay ?? true} /><div><strong>{forecast.condition}</strong><p>Mín. {Math.round(forecast.min)} °C / Máx. {Math.round(forecast.max)} °C</p><p>Precipitación {forecast.precipitationProbability}%</p></div></div>
       {forecast.hour && <p>Inicio aproximado: {forecast.hour.time} (hora peruana, {forecast.hour.isDay ? 'día' : 'noche'}) · {forecast.hour.condition} · {Math.round(forecast.hour.temperature)} °C · Precipitación {forecast.hour.precipitationProbability}%</p>}
       <ul>{weatherAdvice(forecast, outdoor).map(advice => <li key={advice}>{advice}</li>)}</ul>
-      <p className="field-help">Pronóstico orientativo; puede cambiar.{forecast.distant ? ' A 7–14 días, revisa nuevamente cerca del evento.' : ''} <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></p></>}
+      <p className="field-help">Pronóstico orientativo; puede cambiar.{forecast.distant ? ' A 7–14 días, revisa nuevamente cerca del evento.' : ''} <a href="https://open-meteo.com/" target="_blank" rel="noreferrer">Open-Meteo</a></p></HaloCard>}
   </section>;
 }

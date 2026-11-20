@@ -1,4 +1,7 @@
 'use client';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 import { FormEvent, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LocationSearch, type SelectedLocation } from './location-search';
@@ -9,11 +12,15 @@ import { FieldError, fieldErrors, focusError } from './field-errors';
 import { clientApi } from '@/lib/client-api';
 import { AppError, eventInput, publicationErrors } from '@/lib/validation';
 import type { Event as TicketEvent } from '@/lib/events';
+import { notify } from '@/lib/feedback';
+import { HaloSegmented } from '@/components/ui/halo-segmented';
+import { HaloProgress } from '@/components/ui/halo-progress';
 
 export function EventForm({ initial }: { initial?: TicketEvent }) {
   const router = useRouter(), form = useRef<HTMLFormElement>(null);
   const eventId = useRef(initial?.id ?? ''), persisted = useRef(Boolean(initial)), lock = useRef(false);
   const focusPending = useRef(false);
+  const celebrated = useRef(Boolean(initial));
   const [values, setValues] = useState({
     title: initial?.title ?? '', description: initial?.description ?? '', date: initial?.date ?? '', startTime: initial?.startTime ?? '',
     venue: initial?.venue ?? '', address: initial?.address ?? '', city: initial?.city ?? '', reference: initial?.reference ?? '',
@@ -73,20 +80,22 @@ export function EventForm({ initial }: { initial?: TicketEvent }) {
         setCoverUrl(`/api/events/${eventId.current}/cover?size=small&v=${result.version}`); setFile(null);
       }
       if (publish) { setMessage('Publicando evento…'); await clientApi(`/api/events/${eventId.current}/publish`, 'POST'); }
+      notify({ title: publish ? 'Evento publicado' : initial ? 'Evento actualizado' : 'Evento creado', description: publish ? 'Tu fiesta ya tiene su lugar en la cartelera.' : 'El borrador se guardó. Puedes completarlo desde tu panel.', tone: 'success', celebrate: !celebrated.current, eventId:eventId.current });
+      celebrated.current = true;
       router.push(`/panel/${eventId.current}`); router.refresh();
     } catch (error) { focusPending.current = true; setErrors(fieldErrors(error)); setMessage((error as Error).message); }
     finally { setBusy(false); lock.current = false; }
   }
   const attrs = (key: string) => ({ 'data-field': key, 'aria-invalid': Boolean(errors[key]), 'aria-describedby': errors[key] ? `${key}-error` : undefined });
   const field = (key: keyof typeof values, label: string, type = 'text', maxLength = 200) => <div className="field-group">
-    <label htmlFor={key}>{label}</label><input {...attrs(key)} id={key} type={type} maxLength={maxLength} value={String(values[key])} onChange={e => { change(key, e.target.value); if (key === 'date') setHoliday(null); }} /><FieldError name={key} errors={errors} />
+    <label htmlFor={key}>{label}</label><Input {...attrs(key)} id={key} type={type} maxLength={maxLength} value={String(values[key])} onChange={e => { change(key, e.target.value); if (key === 'date') setHoliday(null); }} /><FieldError name={key} errors={errors} />
   </div>;
   return <form ref={form} className="event-form" noValidate onSubmit={submit}>
     <fieldset disabled={busy}>
       <section className="form-section"><h2>Lo esencial</h2>
         {field('title', 'Nombre del evento', 'text', 160)}
-        <div className="field-group"><label htmlFor="description">Descripción</label><textarea {...attrs('description')} id="description" rows={4} maxLength={5000} value={values.description} onChange={e => change('description', e.target.value)} /><FieldError name="description" errors={errors} /></div>
-        <CoverInput file={file} currentUrl={coverUrl} onChange={file => { setFile(file); clearErrors(['cover']); }} errors={errors} />
+        <div className="field-group"><label htmlFor="description">Descripción</label><Textarea {...attrs('description')} id="description" rows={4} maxLength={5000} value={values.description} onChange={e => change('description', e.target.value)} /><FieldError name="description" errors={errors} /></div>
+        <CoverInput file={file} currentUrl={coverUrl} onChange={file => { setFile(file); clearErrors(['cover']); }} errors={errors} disabled={busy} />
         <div className="two-columns">{field('date', 'Fecha', 'date')}{field('startTime', 'Hora de inicio', 'time')}</div>
         {holiday && <p className="selection-note">Feriado: {holiday}</p>}
         {field('category', 'Categoría', 'text', 80)}
@@ -98,16 +107,17 @@ export function EventForm({ initial }: { initial?: TicketEvent }) {
         <LocationMap latitude={latitude} longitude={longitude} onChange={(lat, lng) => { if (busy) return; clearErrors(['latitude', 'longitude']); setValues(v => ({ ...v, latitude: lat.toFixed(6), longitude: lng.toFixed(6) })); setMoved(true); }} />
         {moved && <p className="selection-note">Moviste el punto. Revisa la dirección escrita; no la cambiamos automáticamente.</p>}
         <div className="two-columns">{field('latitude', 'Latitud (ej. -12.06513)')}{field('longitude', 'Longitud (ej. -75.20486)')}</div>
-        <label className="checkbox-row"><input type="checkbox" checked={values.outdoor} onChange={e => change('outdoor', e.target.checked)} />Evento al aire libre</label>
+        <div className="space-selection" role="group" aria-label="Tipo de espacio"><p>Tipo de espacio</p><HaloSegmented className="space-segmented" items={[{value:'inside',label:'Interior'},{value:'outside',label:'Al aire libre'}]} value={values.outdoor ? 'outside' : 'inside'} onValueChange={value=>change('outdoor',value==='outside')} disabled={busy} /></div>
         <WeatherPanel latitude={latitude} longitude={longitude} date={values.date} time={values.startTime} outdoor={values.outdoor} />
       </section>
       <section className="form-section"><h2>Entrada general</h2><div className="two-columns">
-        <div className="field-group"><label htmlFor="price">Precio en soles</label><input {...attrs('price')} id="price" inputMode="decimal" maxLength={12} value={values.price} onChange={e => change('price', e.target.value)} /><FieldError name="price" errors={errors} /></div>
-        <div className="field-group"><label htmlFor="capacity">Cantidad</label><input {...attrs('capacity')} id="capacity" type="number" min="1" max="10000" step="1" value={values.capacity} onChange={e => change('capacity', e.target.value)} /><FieldError name="capacity" errors={errors} /></div>
+        <div className="field-group"><label htmlFor="price">Precio en soles</label><Input {...attrs('price')} id="price" inputMode="decimal" maxLength={12} value={values.price} onChange={e => change('price', e.target.value)} /><FieldError name="price" errors={errors} /></div>
+        <div className="field-group"><label htmlFor="capacity">Cantidad</label><Input {...attrs('capacity')} id="capacity" type="number" min="1" max="10000" step="1" value={values.capacity} onChange={e => change('capacity', e.target.value)} /><FieldError name="capacity" errors={errors} /></div>
       </div></section>
       <p className="field-help">Puedes guardar un borrador incompleto. Publicar exige todos los datos y portada. Después solo podrás reemplazar la portada.</p>
-      <div className="actions"><button className="button button-secondary" type="submit" value="draft">Guardar borrador</button><button className="button button-primary" type="submit" value="publish">{busy ? 'Guardando…' : 'Publicar evento'}</button></div>
+      <div className="actions"><Button className="button button-secondary" type="submit" value="draft">Guardar borrador</Button><Button className="button button-primary" type="submit" value="publish">{busy ? 'Guardando…' : 'Publicar evento'}</Button></div>
     </fieldset>
-    {message && <p className={`notice${Object.keys(errors).length ? ' notice-error' : ''}`} role="status">{message}</p>}
+    {busy && <HaloProgress value={null} label={message || 'Guardando evento…'} className="inline-progress" />}
+    {!busy && message && <p className={`notice${Object.keys(errors).length ? ' notice-error' : ''}`} role="status">{message}</p>}
   </form>;
 }

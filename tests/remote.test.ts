@@ -35,6 +35,14 @@ describe.skipIf(!enabled)('remote Supabase: independent concurrent transactions'
     if (!a) return;
     const failures: string[] = [];
     for (const fixture of fixtureEvents) {
+    const orders = await a.from('orders').select('id').eq('event_id', fixture);
+    if (orders.error) failures.push('order lookup');
+    if (orders.data?.length) {
+      for (const table of ['mp_payments', 'mp_checkouts']) {
+        const result = await a.from(table).delete().in('order_id', orders.data.map(order => order.id));
+        if (result.error) failures.push(table);
+      }
+    }
     for (const table of ['check_ins', 'tickets', 'orders', 'event_staff', 'ticket_types', 'cover_cleanup']) {
       const result = await a.from(table).delete().eq('event_id', fixture);
       if (result.error) failures.push(table);
@@ -110,5 +118,36 @@ describe.skipIf(!enabled)('remote Supabase: independent concurrent transactions'
       expect(remaining.error).toBeNull(); expect(orders.error).toBeNull();
       expect(remaining.data!.length).toBe(orders.data!.length);
     }
+  }, 60000);
+  it('reserves the last MP slot and reconciles concurrent approvals once without revoking on another refund', async () => {
+    const id = randomUUID(); fixtureEvents.add(id);
+    await call(a, 'save_event', { p_actor: users[0], p_id: id, p_data: {
+      title: 'Prueba de transacción MP', description: 'Solo RPC de base de pruebas; no realiza pagos en Mercado Pago.',
+      starts_at: new Date(Date.now() + 86400000).toISOString(), venue: 'Prueba', address: 'Prueba', city: 'Piura',
+      latitude: -5.1945, longitude: -80.6328, category: 'Prueba', outdoor: false, price_cents: 2500, capacity: 1,
+    } });
+    await image(id); await call(a, 'publish_event', { p_actor: users[0], p_event: id });
+    const ids = [randomUUID(), randomUUID()];
+    const args = (orderId: string) => ({ p_id: orderId, p_event: id, p_name: 'Prueba', p_email: 'test@example.invalid', p_access_hash: hash, p_seller: 'fixture-seller' });
+    const reservations = await Promise.allSettled([call(a, 'create_mp_order', args(ids[0])), call(b, 'create_mp_order', args(ids[1]))]);
+    expect(reservations.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(reservations.filter(result => result.status === 'rejected')).toHaveLength(1);
+    const orderId = ids[reservations.findIndex(result => result.status === 'fulfilled')];
+    await call(b, 'create_mp_order', args(orderId));
+    const paymentId = `${Date.now()}${Math.floor(Math.random() * 1000000)}`;
+    const payment = (token: string, payment = paymentId, state = 'approved') => ({
+      p_order: orderId, p_payment: payment, p_seller: 'fixture-seller', p_amount: 2500, p_state: state, p_token: token,
+    });
+    const approved = await Promise.all([call(a, 'reconcile_mp_payment', payment(randomBytes(32).toString('hex'))), call(b, 'reconcile_mp_payment', payment(randomBytes(32).toString('hex')))]);
+    expect(approved).toEqual(['paid', 'paid']);
+    await call(a, 'reconcile_mp_payment', payment(randomBytes(32).toString('hex'), `${paymentId}1`, 'refunded'));
+    const tickets = await a.from('tickets').select('token,revoked_at').eq('order_id', orderId);
+    expect(tickets.error).toBeNull(); expect(tickets.data).toHaveLength(1); expect(tickets.data![0].revoked_at).toBeNull();
+    const scan = { p_actor: users[0], p_event: id, p_token: tickets.data![0].token };
+    const scans = await Promise.all([call(a, 'check_in', scan), call(b, 'check_in', scan)]);
+    expect(scans.map(result => result.status).sort()).toEqual(['accepted', 'used']);
+    const stock = await a.from('ticket_types').select('sold').eq('event_id', id).single();
+    expect(stock.error).toBeNull(); expect(stock.data!.sold).toBe(1);
+    for (const table of ['mp_checkouts', 'mp_payments']) expect((await anonymous.from(table).select('*').limit(1)).error).not.toBeNull();
   }, 60000);
 });

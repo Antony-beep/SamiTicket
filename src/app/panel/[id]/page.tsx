@@ -5,6 +5,7 @@ import { EventActions } from '@/components/event-actions';
 import { Scanner } from '@/components/scanner';
 import { CoverManager } from '@/components/cover-manager';
 import { DeleteEvent } from '@/components/delete-event';
+import { EventArrival } from '@/components/event-arrival';
 import { authorizedEvent, ownerSummary } from '@/lib/server/data';
 import { pageActor, pageData } from '@/lib/server/page-auth';
 import { formatCurrency, formatEventDate } from '@/lib/events';
@@ -20,9 +21,9 @@ export default async function ManageEventPage({ params }: PageProps<'/panel/[id]
   if (result.error !== undefined) return <main><SiteHeader /><section className="container panel-page"><Problem message={result.error} /><Link href="/panel">Volver al panel</Link></section></main>;
   const { event, summary } = result.data;
     const sold = event.capacity - event.available;
-    return <main><SiteHeader /><section className="container panel-page">
+    return <main><SiteHeader /><EventArrival eventId={id} /><section className="container panel-page">
       <Link className="text-link" href="/panel">Volver a mi panel</Link>
-      <p className="eyebrow">{event.status === 'draft' ? 'Borrador' : 'Publicado'} · {event.isOwner ? 'Organizador' : 'Personal de puerta'}</p>
+      <p className="badge">{event.status === 'draft' ? 'Borrador' : 'Publicado'} · {event.isOwner ? 'Organizador' : 'Personal de puerta'}</p>
       <h1>{event.title || 'Evento sin nombre'}</h1><p>{formatEventDate(event.date)} {event.startTime} · {event.venue}</p>
       {summary && <>
         <div className="stats"><article><span>Entradas emitidas</span><strong>{sold} / {event.capacity}</strong></article><article><span>Ingresos simulados</span><strong>{formatCurrency(sold * event.priceCents)}</strong></article><article><span>Ingresos en puerta</span><strong>{summary.entries}</strong></article></div>
@@ -31,7 +32,7 @@ export default async function ManageEventPage({ params }: PageProps<'/panel/[id]
         <CoverManager key={event.coverSmallUrl} eventId={id} currentUrl={event.coverSmallUrl} published={event.status === 'published'} />
       </>}
       <section className="panel-card"><h2>Control de ingreso</h2><p>Requiere internet. Cada entrada permite un solo ingreso.</p><Scanner key={id} eventId={id} /></section>
-      {summary && <section className="panel-card"><h2>Últimas 100 órdenes</h2><p>Todos los importes corresponden a pagos simulados.</p><div className="table-scroll"><table><thead><tr><th>Comprador</th><th>Correo</th><th>Importe</th><th>Estado</th></tr></thead><tbody>{summary.orders.map(order => <tr key={order.id}><td>{order.buyer_name}</td><td>{order.buyer_email}</td><td>{formatCurrency(order.amount_cents)}</td><td>{({ pending: 'Pendiente', paid: 'Aprobado', rejected: 'Rechazado' } as Record<string, string>)[order.status]}</td></tr>)}</tbody></table></div>{!summary.orders.length && <p>Aún no hay órdenes.</p>}</section>}
+      {summary && <section className="panel-card"><div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}><div><h2>Últimas 100 órdenes</h2><p>Todos los importes corresponden a pagos simulados.</p></div>{summary.orders.length > 0 && <a className="button button-secondary" href={`/api/events/${id}/export`} download>📥 Exportar padrón CSV (DNI RENIEC)</a>}</div><div className="table-scroll"><table><thead><tr><th>Comprador</th><th>DNI</th><th>Correo</th><th>Importe</th><th>Estado</th></tr></thead><tbody>{summary.orders.map(order => <tr key={order.id}><td>{order.buyer_name}</td><td>{order.buyer_dni || '—'}</td><td>{order.buyer_email}</td><td>{formatCurrency(order.amount_cents)}</td><td>{({ pending: 'Pendiente', paid: 'Aprobado', rejected: 'Rechazado' } as Record<string, string>)[order.status]}</td></tr>)}</tbody></table></div>{!summary.orders.length && <p>Aún no hay órdenes.</p>}</section>}
       {summary && <DeleteEvent id={id} title={event.title} hasOrders={summary.orders.length > 0} />}
     </section></main>;
 }
